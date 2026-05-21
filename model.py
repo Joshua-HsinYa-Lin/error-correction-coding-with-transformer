@@ -19,6 +19,7 @@ class PositionalEncoding(nn.Module):
 
 class Seq2SeqTransformer(nn.Module):
     def __init__(self, d_model: int = 256, nhead: int = 8, num_encoder_layers: int = 4, num_decoder_layers: int = 4, dim_feedforward: int = 1024, dropout: float = 0.1, out_dim: int = 1):
+        #d_model is the dimension of the embedding space
         super().__init__()
         self.src_proj = nn.Linear(1, d_model)
         self.tgt_proj = nn.Linear(1, d_model)
