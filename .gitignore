@@ -2,5 +2,5 @@
 GEMINI.md
 example/
 venv/
-.model.py.swp
+.swp
 __pycache__/
