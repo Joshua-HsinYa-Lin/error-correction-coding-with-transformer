@@ -4,3 +4,4 @@ example/
 venv/
 .swp
 __pycache__/
+dataset/
