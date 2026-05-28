@@ -36,6 +36,7 @@ def train() -> None:
             total_loss += loss.item()
         avg_loss = total_loss / len(dataloader)
         print(f"Epoch {epoch+1}, Loss: {avg_loss:.4f}")
+    torch.save(model.state_dict(), "model_weights.pth")
 
 if __name__ == "__main__":
     train()
