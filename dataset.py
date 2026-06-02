@@ -6,14 +6,19 @@ from torch.utils.data import Dataset, DataLoader
 class EditDistanceDataset(Dataset):
     def __init__(self, file_path: str, max_seq_len: int):
         super().__init__()
-        self.file_path = file_path
         self.max_seq_len = max_seq_len
-        self.keys = []
-        with h5py.File(self.file_path, 'r') as f:
-            self.keys = list(f.keys())
+        self.data = []
+        with h5py.File(file_path, 'r') as f:
+            keys = list(f.keys())
+            for key in keys:
+                entry = f[key]
+                original = np.array(entry['original'])
+                edited = np.array(entry['edited'])
+                distance = np.array(entry['distance'])
+                self.data.append((original, edited, distance))
 
     def __len__(self) -> int:
-        return len(self.keys)
+        return len(self.data)
 
     def _pad_and_mask(self, seq: np.ndarray) -> tuple:
         seq_len = len(seq)
@@ -29,12 +34,7 @@ class EditDistanceDataset(Dataset):
         return torch.tensor(seq, dtype=torch.float32), mask
 
     def __getitem__(self, idx: int) -> tuple:
-        key = self.keys[idx]
-        with h5py.File(self.file_path, 'r') as f:
-            entry = f[key]
-            original = np.array(entry['original'])
-            edited = np.array(entry['edited'])
-            distance = np.array(entry['distance'])
+        original, edited, distance = self.data[idx]
         orig_seq, orig_mask = self._pad_and_mask(original)
         edit_seq, edit_mask = self._pad_and_mask(edited)
         dist_tensor = torch.tensor(distance, dtype=torch.float32)
