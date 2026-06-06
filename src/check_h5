@@ -1,0 +1,14 @@
+import h5py
+
+def verify_schema() -> None:
+    dataset_path = "../dataset/triplet_datasets_K_90_num_seq_10000.h5"
+    with h5py.File(dataset_path, 'r') as f:
+        keys = list(f.keys())
+        first_key = keys[0]
+        entry = f[first_key]
+        print(f"Group: {first_key}")
+        for sub_key in entry.keys():
+            print(f"Contains key: {sub_key}")
+
+if __name__ == "__main__":
+    verify_schema()

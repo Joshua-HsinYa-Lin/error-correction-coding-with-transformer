@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 
-class EditDistanceDataset(Dataset):
+class TripletEditDistanceDataset(Dataset):
     def __init__(self, file_path: str, max_seq_len: int):
         super().__init__()
         self.max_seq_len = max_seq_len
@@ -12,10 +12,10 @@ class EditDistanceDataset(Dataset):
             keys = list(f.keys())
             for key in keys:
                 entry = f[key]
-                original = np.array(entry['original'])
-                edited = np.array(entry['edited'])
-                distance = np.array(entry['distance'])
-                self.data.append((original, edited, distance))
+                anchor = np.array(entry['anchor'])
+                positive = np.array(entry['positive'])
+                negative = np.array(entry['negative'])
+                self.data.append((anchor, positive, negative))
 
     def __len__(self) -> int:
         return len(self.data)
@@ -34,17 +34,16 @@ class EditDistanceDataset(Dataset):
         return torch.tensor(seq, dtype=torch.float32), mask
 
     def __getitem__(self, idx: int) -> tuple:
-        original, edited, distance = self.data[idx]
-        orig_seq, orig_mask = self._pad_and_mask(original)
-        edit_seq, edit_mask = self._pad_and_mask(edited)
-        dist_tensor = torch.tensor(distance, dtype=torch.float32)
-        return orig_seq, orig_mask, edit_seq, edit_mask, dist_tensor
+        anchor, positive, negative = self.data[idx]
+        anc_seq, anc_mask = self._pad_and_mask(anchor)
+        pos_seq, pos_mask = self._pad_and_mask(positive)
+        neg_seq, neg_mask = self._pad_and_mask(negative)
+        return anc_seq, anc_mask, pos_seq, pos_mask, neg_seq, neg_mask
 
 if __name__ == "__main__":
-    dataset_path = "dataset/edit_distance_dataset_K_90.h5"
-    dataset = EditDistanceDataset(dataset_path, max_seq_len=100)
-    orig_seq, orig_mask, edit_seq, edit_mask, distance = dataset[0]
-    print(orig_seq.shape)
-    print(orig_mask.shape)
-    print(edit_seq.shape)
-    print(distance.item())
+    dataset_path = "../dataset/triplet_datasets_K_90_num_seq_10000.h5"
+    dataset = TripletEditDistanceDataset(dataset_path, max_seq_len=100)
+    anc_seq, anc_mask, pos_seq, pos_mask, neg_seq, neg_mask = dataset[0]
+    print(anc_seq.shape)
+    print(pos_seq.shape)
+    print(neg_seq.shape)
