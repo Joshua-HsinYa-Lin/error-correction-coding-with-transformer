@@ -1,88 +1,50 @@
 import torch
-import torch.nn as nn
-import numpy as np
+import torch.nn.functional as F
 import matplotlib.pyplot as plt
-from scipy.stats import pearsonr, spearmanr
-from dataset import EditDistanceDataset
-from model import Seq2SeqTransformer
+import numpy as np
+from torch.utils.data import DataLoader
+from dataset import TripletEditDistanceDataset
+from model import SiameseTransformer
 
-def levenshtein_distance(seq1: list, seq2: list) -> int:
-    size_x = len(seq1) + 1
-    size_y = len(seq2) + 1
-    matrix = np.zeros((size_x, size_y), dtype=int)
-    for x in range(size_x):
-        matrix[x, 0] = x
-    for y in range(size_y):
-        matrix[0, y] = y
-    for x in range(1, size_x):
-        for y in range(1, size_y):
-            if seq1[x-1] == seq2[y-1]:
-                matrix[x, y] = min(matrix[x-1, y] + 1, matrix[x, y-1] + 1, matrix[x-1, y-1])
-            else:
-                matrix[x, y] = min(matrix[x-1, y] + 1, matrix[x, y-1] + 1, matrix[x-1, y-1] + 1)
-    return matrix[size_x - 1, size_y - 1]
-
-def evaluate_metrics() -> None:
+def plot_distance_distributions() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    dataset_path = "dataset/edit_distance_dataset_K_90.h5"
-    dataset = EditDistanceDataset(dataset_path, max_seq_len=100)
-    subset_size = 12800
-    if len(dataset) > subset_size:
-        subset_indices = torch.randperm(len(dataset))[:subset_size].tolist()
-        dataset = torch.utils.data.Subset(dataset, subset_indices)
-    model = Seq2SeqTransformer()
+    dataset_path = "dataset/triplet_datasets_K_90_num_seq_10000.h5"
+    dataset = TripletEditDistanceDataset(dataset_path, max_seq_len=100)
+    dataloader = DataLoader(dataset, batch_size=256, shuffle=False)
+    model = SiameseTransformer()
     model.load_state_dict(torch.load("model_weights.pth", map_location=device, weights_only=True))
     model.to(device)
     model.eval()
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=256, shuffle=False)
-    all_true_distances = []
-    all_pred_distances = []
-    print("Starting distance evaluation...")
+    all_pos_dists = []
+    all_neg_dists = []
+    print("Extracting embedding distances...")
     with torch.no_grad():
-        for batch_idx, (orig_seq, orig_mask, edit_seq, edit_mask, dist_tensor) in enumerate(dataloader):
-            orig_seq = orig_seq.to(device)
-            orig_mask = orig_mask.to(device)
-            edit_seq = edit_seq.to(device)
-            edit_mask = edit_mask.to(device)
-            batch_size = edit_seq.size(0)
-            max_len = orig_seq.size(1)
-            tgt_input = torch.full((batch_size, 1), -1.0, dtype=torch.float32, device=device)
-            for step in range(max_len):
-                seq_len = tgt_input.size(1)
-                causal_mask = nn.Transformer.generate_square_subsequent_mask(seq_len).to(device)
-                logits = model(edit_seq, tgt_input, src_key_padding_mask=edit_mask, tgt_mask=causal_mask)
-                next_token_logits = logits[:, -1]
-                next_token = (next_token_logits > 0.0).float().unsqueeze(1)
-                tgt_input = torch.cat([tgt_input, next_token], dim=1)
-            predictions = tgt_input[:, 1:]
-            for i in range(batch_size):
-                valid_len = (~orig_mask[i]).sum().item()
-                true_seq_list = orig_seq[i][:valid_len].cpu().tolist()
-                pred_seq_list = predictions[i][:valid_len].cpu().tolist()
-                pred_dist = levenshtein_distance(true_seq_list, pred_seq_list)
-                true_dist = dist_tensor[i].item()
-                all_true_distances.append(true_dist)
-                all_pred_distances.append(pred_dist)
-            print(f"Evaluated Batch {batch_idx + 1}/{len(dataloader)}")
-    true_arr = np.array(all_true_distances)
-    pred_arr = np.array(all_pred_distances)
-    rmse = np.sqrt(np.mean((pred_arr - true_arr) ** 2))
-    mae = np.mean(np.abs(pred_arr - true_arr))
-    pearson_corr, _ = pearsonr(true_arr, pred_arr)
-    spearman_corr, _ = spearmanr(true_arr, pred_arr)
-    print("Metrics Evaluation Complete")
-    print(f"RMSE: {rmse:.4f}")
-    print(f"MAE: {mae:.4f}")
-    print(f"Pearson Correlation: {pearson_corr:.4f}")
-    print(f"Spearman Correlation: {spearman_corr:.4f}")
-    plt.figure(figsize=(8, 6))
-    plt.scatter(true_arr, pred_arr, alpha=0.5, s=2)
-    plt.plot([min(true_arr), max(true_arr)], [min(true_arr), max(true_arr)], 'r')
-    plt.xlabel("True Edit Distance")
-    plt.ylabel("Predicted Sequence Edit Distance")
-    plt.title("Transformer ECC: True vs Predicted Edit Distance")
-    plt.savefig("distance_scatter.png")
-    print("Scatter plot saved to distance_scatter.png")
+        for anc_seq, anc_mask, pos_seq, pos_mask, neg_seq, neg_mask in dataloader:
+            anc_seq = anc_seq.to(device)
+            anc_mask = anc_mask.to(device)
+            pos_seq = pos_seq.to(device)
+            pos_mask = pos_mask.to(device)
+            neg_seq = neg_seq.to(device)
+            neg_mask = neg_mask.to(device)
+            anc_emb = model(anc_seq, src_key_padding_mask=anc_mask)
+            pos_emb = model(pos_seq, src_key_padding_mask=pos_mask)
+            neg_emb = model(neg_seq, src_key_padding_mask=neg_mask)
+            pos_dist = F.pairwise_distance(anc_emb, pos_emb).cpu().numpy()
+            neg_dist = F.pairwise_distance(anc_emb, neg_emb).cpu().numpy()
+            all_pos_dists.extend(pos_dist)
+            all_neg_dists.extend(neg_dist)
+    plt.figure(figsize=(10, 6))
+    plt.hist(all_pos_dists, bins=50, alpha=0.6, color='blue', label='Positive Pairs (Correlated)')
+    plt.hist(all_neg_dists, bins=50, alpha=0.6, color='red', label='Negative Pairs (Corrupted)')
+    plt.axvline(np.mean(all_pos_dists), color='blue', linestyle='dashed', linewidth=2)
+    plt.axvline(np.mean(all_neg_dists), color='red', linestyle='dashed', linewidth=2)
+    plt.xlabel("Euclidean Distance in 256-D Space")
+    plt.ylabel("Frequency")
+    plt.title("Siamese Transformer: Embedding Distance Separation")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.savefig("plots/distance_histogram.png")
+    print("Distance histogram successfully saved to plots/distance_histogram.png")
 
 if __name__ == "__main__":
-    evaluate_metrics()
+    plot_distance_distributions()

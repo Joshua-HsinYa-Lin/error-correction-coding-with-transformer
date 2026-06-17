@@ -13,7 +13,7 @@ def train() -> None:
     model = model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
     criterion = nn.TripletMarginLoss(margin=1.0, p=2)
-    num_epochs = 2
+    num_epochs = 30
     model.train()
     for epoch in range(num_epochs):
         total_loss = 0.0
@@ -32,11 +32,10 @@ def train() -> None:
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
-            if batch_idx % 100 == 0:
-                print(f"Epoch {epoch+1}, Batch {batch_idx}, Current Loss: {loss.item():.4f}")
         avg_loss = total_loss / len(dataloader)
-        print(f"Epoch {epoch+1}, Average Loss: {avg_loss:.4f}")
+        print(f"Epoch {epoch+1}/{num_epochs}, Average Loss: {avg_loss:.4f}")
     torch.save(model.state_dict(), "model_weights.pth")
+    print("Training complete. Weights saved.")
 
 if __name__ == "__main__":
     train()
