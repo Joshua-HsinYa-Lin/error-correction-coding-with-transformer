@@ -28,13 +28,13 @@ class CTCEditDistanceDataset(Dataset):
             valid_len = self.max_seq_len
             mask = torch.zeros(self.max_seq_len, dtype=torch.bool)
         else:
-            ctc_seq = np.pad(ctc_seq, (0, pad_len), 'constant', constant_values=0)
+            ctc_seq = np.pad(ctc_seq, (0, pad_len), 'constant', constant_values=1)
             valid_len = seq_len
             zeros_t = torch.zeros(seq_len, dtype=torch.bool)
             ones_t = torch.ones(pad_len, dtype=torch.bool)
             mask = torch.cat([zeros_t, ones_t])
         return torch.tensor(ctc_seq, dtype=torch.long), mask, valid_len
-
+    
     def __getitem__(self, idx: int) -> tuple:
         orig, edit = self.data[idx]
         orig_seq, orig_mask, orig_len = self._process_seq(orig)

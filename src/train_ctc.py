@@ -26,14 +26,14 @@ def train_ctc() -> None:
             logits = model(edit_seq, src_key_padding_mask=edit_mask)
             log_probs = F.log_softmax(logits, dim=2)
             log_probs = log_probs.transpose(0, 1)
-            loss = criterion(log_probs, orig_seq, edit_len, orig_len)
+            input_lengths = torch.full((edit_seq.size(0),), 100, dtype=torch.long)
+            loss = criterion(log_probs, orig_seq, input_lengths, orig_len)
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
         avg_loss = total_loss / len(dataloader)
         print(f"Epoch {epoch+1}/{num_epochs}, CTC Loss: {avg_loss:.4f}")
     torch.save(model.state_dict(), "ctc_model_weights.pth")
-    print("CTC Training complete. Weights saved.")
 
 if __name__ == "__main__":
     train_ctc()
