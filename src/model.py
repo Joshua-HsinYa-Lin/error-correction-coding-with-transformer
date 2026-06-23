@@ -1,6 +1,7 @@
 import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model: int, max_len: int = 4096):
@@ -30,5 +31,8 @@ class CTCTransformer(nn.Module):
         src_emb = self.src_embedding(src)
         src_pos = self.pos_encoder(src_emb)
         enc_out = self.transformer_encoder(src=src_pos, src_key_padding_mask=src_key_padding_mask)
-        logits = self.ctc_head(enc_out)
+        enc_out_transposed = enc_out.transpose(1, 2)
+        enc_out_upsampled = F.interpolate(enc_out_transposed, scale_factor=2.0, mode='nearest')
+        enc_out_restored = enc_out_upsampled.transpose(1, 2)
+        logits = self.ctc_head(enc_out_restored)
         return logits
