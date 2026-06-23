@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-class CTCEditDistanceDataset(Dataset):
+class CTCTripletDataset(Dataset):
     def __init__(self, file_path: str, max_seq_len: int = 100):
         super().__init__()
         self.max_seq_len = max_seq_len
@@ -12,9 +12,9 @@ class CTCEditDistanceDataset(Dataset):
             keys = list(f.keys())
             for key in keys:
                 entry = f[key]
-                orig = np.array(entry['original'])
-                edit = np.array(entry['edited'])
-                self.data.append((orig, edit))
+                anchor = np.array(entry['anchor'])
+                positive = np.array(entry['positive'])
+                self.data.append((anchor, positive))
 
     def __len__(self) -> int:
         return len(self.data)
@@ -34,9 +34,9 @@ class CTCEditDistanceDataset(Dataset):
             ones_t = torch.ones(pad_len, dtype=torch.bool)
             mask = torch.cat([zeros_t, ones_t])
         return torch.tensor(ctc_seq, dtype=torch.long), mask, valid_len
-    
+
     def __getitem__(self, idx: int) -> tuple:
-        orig, edit = self.data[idx]
-        orig_seq, orig_mask, orig_len = self._process_seq(orig)
-        edit_seq, edit_mask, edit_len = self._process_seq(edit)
+        anchor, positive = self.data[idx]
+        edit_seq, edit_mask, edit_len = self._process_seq(positive)
+        orig_seq, orig_mask, orig_len = self._process_seq(anchor)
         return edit_seq, edit_mask, edit_len, orig_seq, orig_mask, orig_len
