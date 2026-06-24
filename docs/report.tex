@@ -12,90 +12,106 @@
 \begin{document}
 
 \begin{center}
-    \textbf{Siamese Transformer Networks for Edit Distance Embedding and Evaluation} \\
+    \textbf{From Generation to Embedding: A Transformer Study of Edit Distance and Error Correction Codes} \\
     Hsin Ya Lin \\
     Institute of Communications, National Yang Ming Chiao Tung University
 \end{center}
 
 \section*{Abstract}
-This report evaluates the efficacy of a Siamese Transformer architecture in mapping error correction code operations into a geometric embedding space. Initial experiments demonstrated that generative decoding struggles with edit distance tasks due to shift-induced error propagation. By utilizing an encoder-only architecture trained with Triplet Margin Loss, the network successfully learns the structural relationships between sequences. The model achieves an RMSE of 2.092 and a Triplet Accuracy of 0.7238, demonstrating that attention mechanisms can effectively map discrete sequence mutations into a measurable metric space, outperforming standard recurrent and convolutional baselines in absolute error and separation accuracy. A subsequent extension replaces the metric embedding with a Connectionist Temporal Classification head, which recovers explicit bit sequences and enables direct Bit Error Rate evaluation while retaining the encoder-only design that avoids shift-induced error propagation.
+This report studies how well Transformer models handle error correction code sequences, measured against traditional algorithms such as the BCJR decoder. The work moved through three architectures. A generative sequence-to-sequence Transformer produced full bit-level metrics and tracked edit distance closely, with a Pearson correlation of 0.8589, yet its Block Error Rate of 0.9999 made it useless as a practical decoder. Removing the decoder and training an encoder-only Siamese network with a Triplet Margin Loss fixed the instability and reached the lowest absolute error of any learned model tested, an RMSE of 2.092 and a Triplet Accuracy of 0.7238, at the cost of no longer emitting sequences. A third attempt added a Connectionist Temporal Classification head to recover bit sequences again; it did not converge, and the reasons are documented as future work. The central result is that attention can map discrete sequence mutations into a measurable geometric space, but the choice between predicting a sequence and embedding it carries a sharp tradeoff in which metrics become available.
 
-\section*{Methodology and Architecture}
-Standard generative sequence-to-sequence models face fundamental limitations when applied to edit distance problems. A single uncorrected insertion or deletion operation shifts the predicted sequence, causing positional loss functions to heavily penalize structurally valid outputs. To resolve this instability, the architecture was refactored into an encoder-only Siamese network designed to evaluate Euclidean distances in a continuous manifold.
+\section*{Problem and Metrics}
+Edit distance is the smallest number of insertions, deletions, and substitutions that turn one sequence into another. Error correction asks a related question: given a corrupted codeword, recover the original. Two families of metrics matter here. Bit Error Rate and Block Error Rate count how many bits, or whole blocks, come out wrong after decoding. Root Mean Square Error, Mean Absolute Error, and the Pearson and Spearman correlations measure how well a model's predicted distance tracks the true Levenshtein distance. A model that only outputs a number can be scored on the second family but not the first. This distinction drove every design decision that follows.
 
-The dataset utilizes a triplet schema consisting of anchor, positive (correlated), and negative (corrupted) sequences. The architecture is a Siamese Transformer featuring an embedding dimension of $d_{model} = 256$, utilizing 8 attention heads across 4 encoder layers. Mean pooling collapses the high-dimensional encoder memory into a single representative embedding vector. 
+\section*{Phase One: Generative Sequence-to-Sequence Baseline}
+The first model was a standard sequence-to-sequence Transformer with an autoregressive decoder, trained with a positional binary cross-entropy loss. It worked well enough to score across both metric families. On the held-out set it reached an RMSE of 2.4817, an MAE of 1.9312, a Pearson correlation of 0.8589, and a Spearman correlation of 0.8557. Because it emits actual bits, it also produced a Bit Error Rate of 0.3716 and a Hamming Loss of 0.3716.
 
-The network was trained over 30 epochs using the AdamW optimizer. Optimization was governed by a Triplet Margin Loss function, defined as:
+Read the right way, the generated sequences were close to correct. When each output is compared to its target by edit distance, the predictions follow the diagonal across the full range of severities, which is the 0.8589 Pearson figure in visible form. Figure \ref{fig:gen_scatter} shows this fit. The encoder representations carry the same structure: a Principal Component Analysis of the encoder states, in Figure \ref{fig:gen_pca}, captures 86.3 percent of the variance in two components and arranges sequences by edit distance rather than at random.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.75\textwidth]{seq/distance_scatter.png}
+    \caption{True edit distance against the edit distance of the generated sequence. The predictions track the diagonal, which is the source of the strong rank correlation.}
+    \label{fig:gen_scatter}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.75\textwidth]{seq/pca_clusters.png}
+    \caption{Principal Component Analysis of the generative encoder states, colored by true edit distance. Two components hold 86.3 percent of the variance.}
+    \label{fig:gen_pca}
+\end{figure}
+
+The problem sat in one number. The Block Error Rate was 0.9999, meaning almost no block came out fully correct. The cause is structural rather than a tuning failure. Error correction involves insertions and deletions, and a single uncorrected deletion shifts every later bit one position to the left. A positional loss reads that shift as a wholesale failure and punishes a sequence that is, in edit terms, nearly right. The decoder never escaped this penalty, so its bit-level output stayed unusable even while its distance estimates looked reasonable. Figure \ref{fig:gen_error} makes the gap plain: the bit rate sits near 0.37 while the block rate stands at almost one.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.65\textwidth]{seq/error_rates.png}
+    \caption{Bit Error Rate and Block Error Rate for the generative Transformer. The block rate near unity reflects shift-induced cascading errors rather than isolated bit mistakes.}
+    \label{fig:gen_error}
+\end{figure}
+
+One variant replaced sequence generation with a head that regresses the edit distance directly as a single number. It did not hold up. The predictions saturated near five operations and ignored larger distances, which dragged the correlation down to 0.311 and the RMSE up to 3.772. That collapse is why the fair reading of this phase comes from the generated sequences rather than a regressed scalar, and the numbers reported here follow that reading.
+
+\section*{Phase Two: Siamese Transformer Network}
+The shift penalty is a property of generation, not of attention, so the second design stopped generating. The decoder was removed, and the encoder was reused as a Siamese network that maps each sequence into a 256-dimensional Euclidean space. Two sequences are compared by the distance between their vectors, which sidesteps the alignment problem entirely.
+
+The encoder uses an embedding dimension of $d_{model} = 256$, eight attention heads, and four layers. Mean pooling reduces the per-position encoder output to a single vector per sequence. Training ran for 30 epochs with the AdamW optimizer. The objective was a Triplet Margin Loss over an anchor, a correlated positive, and a corrupted negative:
 \begin{equation}
-    \mathcal{L}(a, p, n) = \max \{ d(a_i, p_i) - d(a_i, n_i) + {\rm margin}, 0 \}
+    \mathcal{L}(a, p, n) = \max \{ d(a, p) - d(a, n) + {\rm margin},\; 0 \},
 \end{equation}
-where $d$ is the pairwise Euclidean distance, $a_i$ is the anchor, $p_i$ is the positive sample, $n_i$ is the negative sample, and the margin is set to 1.0. To calculate scale-comparable evaluation metrics (RMSE and MAE), a 1D linear regression was fitted to project the continuous Euclidean embedding distances onto the discrete Levenshtein edit distance scale.
+where $d$ is the Euclidean distance and the margin is 1.0. To report RMSE and MAE on the edit distance scale, a one-dimensional linear regression maps the continuous embedding distance onto the discrete Levenshtein distance. This is a calibration step; the network itself learns geometry, not a number.
 
-\section*{Empirical Results}
-Performance was evaluated by calculating the distances for 10,000 sequence triplets. The network yielded an average positive distance of 2.7128 and an average negative distance of 3.3750, resulting in a Triplet Accuracy of 0.7238.
+Across 10,000 triplets the model placed correlated pairs at an average distance of 2.7128 and corrupted pairs at 3.3750. The resulting Triplet Accuracy, the fraction of triplets where the positive is closer than the negative, was 0.7238. Figure \ref{fig:histogram} shows the two distance distributions pulling apart.
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.8\textwidth]{plots/distance_histogram.png}
-    \caption{Distribution of Euclidean distances in the 256-dimensional embedding space, demonstrating structural separation between correlated and corrupted sequence pairs.}
+    \caption{Distribution of embedding distances for correlated and corrupted pairs. The separation between the means is what the Triplet Accuracy measures.}
     \label{fig:histogram}
 \end{figure}
-
-Figure \ref{fig:histogram} visualizes the mathematical separation between the mean distributions, confirming the network pulled correlated sequences together while pushing corrupted sequences apart.
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.8\textwidth]{plots/distance_scatter.png}
-    \caption{Correlation mapping between true Levenshtein edit distance and the predicted Euclidean embedding distance.}
+    \caption{True Levenshtein distance against predicted embedding distance. The spread around the trend line explains the gap between strong absolute error and weaker rank correlation.}
     \label{fig:scatter}
 \end{figure}
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.8\textwidth]{plots/pca_clusters.png}
-    \caption{Principal Component Analysis projecting the 256-dimensional Siamese embedding manifold into a 2D space, colored by sequence corruption severity.}
+    \caption{The 256-dimensional embedding projected to two dimensions by Principal Component Analysis, colored by corruption severity. Sequences organize by structural integrity rather than at random.}
     \label{fig:pca}
 \end{figure}
 
-The Principal Component Analysis in Figure \ref{fig:pca} illustrates that the attention layers capture the underlying variance of the edit distance manifold, organizing sequences spatially based on structural integrity.
-
 \section*{Discussion and Baseline Comparison}
-To contextualize the performance, the Siamese Transformer was benchmarked against established architectural baseline data. Table \ref{tab:baselines} outlines the comparative metrics across the evaluated models.
+Table \ref{tab:baselines} places both Transformer phases against classical baselines and a stronger reference architecture from the lab.
 
 \begin{table}[H]
 \centering
-\caption{Comparative Edit Distance Metrics Across Network Architectures}
+\caption{Comparative Edit Distance Metrics Across Architectures}
 \vspace{0.2cm}
 \begin{tabular}{lcccccc}
 \toprule
-\textbf{Model} & \textbf{RMSE} $\downarrow$ & \textbf{MAE} $\downarrow$ & \textbf{Pearson} $\uparrow$ & \textbf{Spearman} $\uparrow$ & \textbf{Triplet Acc.} $\uparrow$ & \textbf{Hamming Loss} $\downarrow$ \\ 
+\textbf{Model} & \textbf{RMSE} $\downarrow$ & \textbf{MAE} $\downarrow$ & \textbf{Pearson} $\uparrow$ & \textbf{Spearman} $\uparrow$ & \textbf{Triplet Acc.} $\uparrow$ & \textbf{Hamming} $\downarrow$ \\
 \midrule
-Transformer (Gen.) & 3.772 & 2.919 & 0.311 & 0.223 & 0.530 & 0.373 \\ 
-GRU & 3.244 & 2.530 & 0.592 & 0.575 & 0.636 & 0.310 \\ 
-CNN-ED & 2.906 & 2.263 & 0.621 & 0.612 & 0.684 & 0.325 \\ 
-CGK & 2.622 & 2.062 & 0.688 & 0.693 & 0.721 & N/A \\ 
-\textbf{Siamese (Proposed)} & \textbf{2.092} & \textbf{1.670} & \textbf{0.455} & \textbf{0.452} & \textbf{0.7238} & \textbf{N/A} \\ 
-Specialized Lab Arch. & 1.541 & 1.180 & 0.912 & 0.914 & 0.835 & 0.049 \\ 
+Transformer (Gen.) & 2.482 & 1.931 & 0.859 & 0.856 & 0.530 & 0.372 \\
+GRU & 3.244 & 2.530 & 0.592 & 0.575 & 0.636 & 0.310 \\
+CNN-ED & 2.906 & 2.263 & 0.621 & 0.612 & 0.684 & 0.325 \\
+CGK & 2.622 & 2.062 & 0.688 & 0.693 & 0.721 & N/A \\
+\textbf{Siamese (Proposed)} & \textbf{2.092} & \textbf{1.670} & 0.455 & 0.452 & \textbf{0.7238} & N/A \\
+Specialized Lab Arch. & 1.541 & 1.180 & 0.912 & 0.914 & 0.835 & 0.049 \\
 \bottomrule
 \end{tabular}
 \label{tab:baselines}
 \end{table}
 
-The data reveals a significant architectural tradeoff. The proposed Siamese Transformer achieves an RMSE of 2.092 and an MAE of 1.670, substantially outperforming traditional models like CGK and CNN-ED in minimizing absolute distance error. Furthermore, its Triplet Accuracy of 0.7238 proves a strong capacity for binary sequence separation. 
+The two Transformer rows tell opposite halves of one story. The generative model has the better correlation of the pair, 0.859 against 0.455, and it is the only learned model in the table that yields a Hamming Loss at all, because it is the only one that prints bits. That advantage is hollow once the Block Error Rate is read alongside it: a decoder that fails 0.9999 of its blocks does not decode. The Siamese model gives up sequence output and, with it, the Hamming column, but it returns the lowest RMSE and MAE of any learned model and the cleanest triplet separation.
 
-However, the correlation coefficients (Pearson 0.455, Spearman 0.452) trail the convolutional and alignment baselines. This indicates that while Triplet Margin Loss effectively establishes tight absolute boundaries and pushes local pairs past the defined margin, it does not inherently force a globally linear ranking across the entire severity scale. Because the architecture maps relationships rather than predicting discrete sequences, Hamming Loss is structurally inapplicable. While the specialized lab architecture maintains the highest overall fidelity, the variance captured by the Siamese encoder proves that multi-head attention mechanisms provide a highly accurate estimation of error correction metrics without the overhead of generative decoding.
+The weaker correlation of the Siamese model deserves a plain explanation. Triplet Margin Loss pushes each pair past a fixed margin, which fixes local ordering and tight absolute error, but it never asks the whole scale to line up in rank. So the absolute error drops while Pearson and Spearman trail the convolutional and alignment baselines. The specialized lab architecture remains ahead on every column, and this report does not claim otherwise. What the two phases establish is narrower and still useful: attention captures the geometry of edit operations well, and the metrics a model can report follow directly from whether it generates or embeds.
 
-\section*{Current Extension: Connectionist Temporal Classification}
-The Siamese architecture quantifies the distance between two sequences but does not emit a recovered sequence, so it cannot produce a Bit Error Rate directly. To recover explicit bit sequences while preserving the shift-invariance of the encoder-only design, the architecture was extended with a Connectionist Temporal Classification head. The encoder retains the embedding dimension of $d_{model} = 256$, the 8 attention heads, and the 4 encoder layers of the prior phase. The pooling stage is removed and replaced with a linear projection onto three classes, comprising one blank symbol and the two binary code symbols.
-
-Connectionist Temporal Classification requires that the input time dimension $T$ accommodate the target length plus the count of adjacent repeated target symbols, since at least one blank must separate consecutive identical emissions. For a binary target of length 100 with extended runs of identical symbols, this requirement can approach a time dimension of 200. To guarantee feasibility, the encoder output is temporally upsampled by a factor of two using nearest-neighbor interpolation, producing an alignment lattice of length $T = 200$ from an input of length 100. The training objective is the Connectionist Temporal Classification negative log likelihood,
-\begin{equation}
-    \mathcal{L}_{CTC} = - \log \sum_{\pi \in \mathcal{B}^{-1}(\mathbf{y})} \prod_{t=1}^{T} p(\pi_t \mid \mathbf{x}),
-\end{equation}
-where $\mathbf{y}$ is the target bit sequence, $\pi$ ranges over the alignment paths, and $\mathcal{B}$ is the many-to-one collapsing map that removes blanks and merges repeated symbols. The loss is configured with the infinite-cost guard enabled so that alignments shorter than the target contribute zero gradient rather than diverging.
-
-Inference uses greedy decoding. The class of maximum probability is selected at each of the 200 time steps, consecutive duplicate classes are collapsed, and the blank symbol is removed, yielding a variable length recovered bit sequence. Because the recovered length rarely equals the target length, the recovered sequence is compared to the original through a length-aware Levenshtein alignment that resolves substitutions, insertions, and deletions. From the alignment the Bit Error Rate is computed as the edit distance divided by the target length, the Block Error Rate as the fraction of sequences with any residual error, and the Hamming Loss as the fraction of aligned positions in error. This decoding stage is what distinguishes the Connectionist Temporal Classification model from the Siamese phase, since it produces explicit bit sequences and therefore makes the Hamming Loss metric, previously inapplicable to the encoder-only embedding, directly computable.
-
-The temporal upsampling and loss computation were first verified on the CPU through a single forward and backward pass, confirming finite loss and stable gradient flow. The greedy decoder and the alignment metrics were verified on synthetic sequences, reproducing the expected blank collapse behavior and exact substitution, insertion, and deletion counts. Convergence was then verified on a ten thousand sample triplet subset on the CPU, where the Connectionist Temporal Classification loss decreased monotonically across five epochs from 0.8807 to 0.7951. The full training run on the large edit distance dataset using a CUDA device, together with the resulting Bit Error Rate, Block Error Rate, and Hamming Loss against the BCJR baseline, is in progress and will be reported once convergence on the complete dataset is confirmed.
+\section*{Future Work}
+The obvious next step is a model that recovers bit sequences without the shift penalty, which would restore the Bit Error Rate and Hamming Loss that the embedding cannot give. A Connectionist Temporal Classification head is the natural candidate, since it scores all alignments at once through a blank symbol and tolerates insertions and deletions. A first version did not work. Trained on the full one million sequence set, the loss settled near $\ln 2$ and the model collapsed to predicting the bit marginal, scoring a Bit Error Rate of 0.5859, worse than simply copying the input, which scores 0.0823. A short overfitting test on 128 samples could not drive the error down either, which rules out a plain learning rate problem and points at the architecture. The likely cause is the nearest-neighbor temporal upsampling used to satisfy the spacing requirement of the loss: duplicating each frame produces identical adjacent vectors, which narrows the set of alignments the decoder can express. Replacing that stage with a learned upsampling layer, such as a transposed convolution, is the planned next step.
 
 \end{document}
