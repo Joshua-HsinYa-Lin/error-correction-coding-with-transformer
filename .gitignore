@@ -8,6 +8,4 @@ dataset/
 *.log
 *.sync*
 *.aux
-GEMINI.md
-claude.md
-CLAUDE.md
+*ZONE*
