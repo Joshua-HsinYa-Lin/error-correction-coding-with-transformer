@@ -1,0 +1,41 @@
+Project History and Architectural Evolution
+
+Author: Hsin Ya Lin
+Institution: Institute of Communications, National Yang Ming Chiao Tung University
+Project Goal: Evaluate Transformer models on sequence prediction and edit distance metrics against traditional algorithms like the BCJR algorithm.
+
+Phase 1: Autoregressive Sequence-to-Sequence Transformer
+The initial architecture utilized a standard sequence-to-sequence Transformer with an autoregressive decoder. 
+
+Phase 1 Performance Metrics:
+Bit Error Rate: 0.3716
+Block Error Rate: 0.9999
+Hamming Loss: 0.3716
+Root Mean Square Error: 2.4817
+Mean Absolute Error: 1.9312
+Pearson Correlation: 0.8589
+Spearman Rank Correlation: 0.8557
+Triplet Accuracy: 0.530
+
+The generative model failed to correct sequences effectively, resulting in a near-total block failure rate of 0.9999. The failure was caused by shift-induced error propagation. Error Correction Code operations involve insertions and deletions. A single uncorrected deletion shifts all subsequent predicted bits to the left. The standard positional Binary Cross-Entropy loss function interpreted this shift as a total sequence failure, heavily penalizing the network and preventing it from learning the underlying error correction logic.
+
+Phase 2: Siamese Transformer Network
+To resolve the shift-induced errors, the generative decoder was completely removed. The architecture was refactored into an encoder-only Siamese network designed to map sequences into a 256-dimensional continuous Euclidean space. The network was trained using Triplet Margin Loss with anchor, positive, and negative sequences.
+
+Phase 2 Performance Metrics:
+Root Mean Square Error: 2.092
+Mean Absolute Error: 1.670
+Pearson Correlation: 0.455
+Spearman Rank Correlation: 0.452
+Triplet Accuracy: 0.7238
+Average Positive Distance: 2.7128
+Average Negative Distance: 3.3750
+Hamming Loss: Not Applicable
+
+This architecture successfully learned the geometric rules of the edit distance manifold. It outperformed traditional baselines like CGK (RMSE 2.622) and CNN-ED (RMSE 2.906) in absolute error minimization. However, it could not generate discrete binary sequences. Because it only output continuous embedding distances, it was mathematically impossible to calculate a Hamming Loss or plot dynamic Bit Error Rate curves. This prevented a direct one-to-one benchmark comparison against traditional decoders.
+
+Phase 3: Connectionist Temporal Classification
+To achieve both sequence prediction and edit distance resilience, the architecture was updated to an encoder-only model with a Connectionist Temporal Classification head. Connectionist Temporal Classification evaluates the generated sequence as a whole and computes the probability of all possible alignments using a blank token. This allows the network to handle insertions and deletions organically without the cascading positional penalties of autoregressive decoding.
+
+The Temporal Upsampling Requirement
+Error Correction Code binary sequences contain massive clusters of repeating bits. The Connectionist Temporal Classification algorithm requires inserting a blank token between identical consecutive characters. If the input and target sequences are both length 100, the loss function lacks the mathematical space to insert the required blanks, causing PyTorch CuDNN backend infinite loop crashes. To solve this, the Transformer encoder outputs are temporally upsampled by a factor of 2.0 using nearest-neighbor interpolation before passing into the classification head. This expands the sequence length to 200, satisfying the repeating character constraint and allowing the model to converge safely on the graphical processing unit.
